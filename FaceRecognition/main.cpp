@@ -1,72 +1,106 @@
-#include <QCoreApplication>
-#include <iostream>
+#if defined(__linux__) || defined(LINUX) || defined(__APPLE__) || defined(ANDROID)
 
-#include <opencv2/highgui.hpp>
-#include <opencv2/objdetect.hpp>
-#include <opencv2/videoio.hpp>
-#include <opencv2/highgui.hpp>
-#include <opencv2/imgproc.hpp>
-#include <iostream>
+#include <opencv2/imgproc/imgproc.hpp>  // Gaussian Blur
+#include <opencv2/core/core.hpp>        // Basic OpenCV structures (cv::Mat, Scalar)
+#include <opencv2/videoio/videoio.hpp>
+#include <opencv2/highgui/highgui.hpp>  // OpenCV window I/O
+#include <opencv2/features2d/features2d.hpp>
+#include <opencv2/objdetect/objdetect.hpp>
+
 #include <stdio.h>
+#include <string>
+#include <vector>
+
 using namespace std;
 using namespace cv;
-/** Function Headers */
-void detectAndDisplay( Mat frame );
-/** Global variables */
-String face_cascade_name = "haarcascade_frontalface_alt.xml";
-String eyes_cascade_name = "haarcascade_eye_tree_eyeglasses.xml";
-CascadeClassifier face_cascade;
-CascadeClassifier eyes_cascade;
-String window_name = "Capture - Face detection";
-/** @function main */
-int main( void )
+
+const string WindowName = "Face Detection example";
+
+class CascadeDetectorAdapter: public DetectionBasedTracker::IDetector
 {
-    VideoCapture capture;
-    Mat frame;
-    //-- 1. Load the cascades
-    if( !face_cascade.load( face_cascade_name ) ){ printf("--(!)Error loading face cascade\n"); return -1; };
-    if( !eyes_cascade.load( eyes_cascade_name ) ){ printf("--(!)Error loading eyes cascade\n"); return -1; };
-    //-- 2. Read the video stream
-    capture.open( -1 );
-    if ( ! capture.isOpened() ) { printf("--(!)Error opening video capture\n"); return -1; }
-    while ( capture.read(frame) )
-    {
-        if( frame.empty() )
+    public:
+        CascadeDetectorAdapter(cv::Ptr<cv::CascadeClassifier> detector):
+            IDetector(),
+            Detector(detector)
         {
-            printf(" --(!) No captured frame -- Break!");
-            break;
+            CV_Assert(detector);
         }
-        //-- 3. Apply the classifier to the frame
-        detectAndDisplay( frame );
-        int c = waitKey(10);
-        if( (char)c == 27 ) { break; } // escape
+
+        void detect(const cv::Mat &Image, std::vector<cv::Rect> &objects)
+        {
+            Detector->detectMultiScale(Image, objects, scaleFactor, minNeighbours, 0, minObjSize, maxObjSize);
+        }
+
+        virtual ~CascadeDetectorAdapter()
+        {}
+
+    private:
+        CascadeDetectorAdapter();
+        cv::Ptr<cv::CascadeClassifier> Detector;
+ };
+
+
+int main(int , char** )
+{
+    namedWindow(WindowName);
+
+    VideoCapture VideoStream(0);
+
+    if (!VideoStream.isOpened())
+    {
+        printf("Error: Cannot open video stream from camera\n");
+        return 1;
     }
+
+    std::string cascadeFrontalfilename = "/home/pi/opencv-3.1.0/data/lbpcascades/lbpcascade_frontalface.xml";
+    cv::Ptr<cv::CascadeClassifier> cascade = makePtr<cv::CascadeClassifier>(cascadeFrontalfilename);
+    cv::Ptr<DetectionBasedTracker::IDetector> MainDetector = makePtr<CascadeDetectorAdapter>(cascade);
+
+    cascade = makePtr<cv::CascadeClassifier>(cascadeFrontalfilename);
+    cv::Ptr<DetectionBasedTracker::IDetector> TrackingDetector = makePtr<CascadeDetectorAdapter>(cascade);
+
+    DetectionBasedTracker::Parameters params;
+    DetectionBasedTracker Detector(MainDetector, TrackingDetector, params);
+
+    if (!Detector.run())
+    {
+        printf("Error: Detector initialization failed\n");
+        return 2;
+    }
+
+    Mat ReferenceFrame;
+    Mat GrayFrame;
+    vector<Rect> Faces;
+
+    while(true)
+    {
+        VideoStream >> ReferenceFrame;
+        cvtColor(ReferenceFrame, GrayFrame, COLOR_RGB2GRAY);
+        Detector.process(GrayFrame);
+        Detector.getObjects(Faces);
+
+        for (size_t i = 0; i < Faces.size(); i++)
+        {
+            rectangle(ReferenceFrame, Faces[i], Scalar(0,255,0));
+        }
+
+        imshow(WindowName, ReferenceFrame);
+
+        if (waitKey(30) >= 0) break;
+    }
+
+    Detector.stop();
+
     return 0;
 }
-/** @function detectAndDisplay */
-void detectAndDisplay( Mat frame )
+
+#else
+
+#include <stdio.h>
+int main()
 {
-    std::vector<Rect> faces;
-    Mat frame_gray;
-    cvtColor( frame, frame_gray, COLOR_BGR2GRAY );
-    equalizeHist( frame_gray, frame_gray );
-    //-- Detect faces
-    face_cascade.detectMultiScale( frame_gray, faces, 1.1, 2, 0|CASCADE_SCALE_IMAGE, Size(30, 30) );
-    for ( size_t i = 0; i < faces.size(); i++ )
-    {
-        Point center( faces[i].x + faces[i].width/2, faces[i].y + faces[i].height/2 );
-        ellipse( frame, center, Size( faces[i].width/2, faces[i].height/2 ), 0, 0, 360, Scalar( 255, 0, 255 ), 4, 8, 0 );
-        Mat faceROI = frame_gray( faces[i] );
-        std::vector<Rect> eyes;
-        //-- In each face, detect eyes
-        eyes_cascade.detectMultiScale( faceROI, eyes, 1.1, 2, 0 |CASCADE_SCALE_IMAGE, Size(30, 30) );
-        for ( size_t j = 0; j < eyes.size(); j++ )
-        {
-            Point eye_center( faces[i].x + eyes[j].x + eyes[j].width/2, faces[i].y + eyes[j].y + eyes[j].height/2 );
-            int radius = cvRound( (eyes[j].width + eyes[j].height)*0.25 );
-            circle( frame, eye_center, radius, Scalar( 255, 0, 0 ), 4, 8, 0 );
-        }
-    }
-    //-- Show what you got
-    imshow( window_name, frame );
+    printf("This sample works for UNIX or ANDROID only\n");
+    return 0;
 }
+
+#endif
